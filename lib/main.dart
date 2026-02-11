@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -49,6 +51,66 @@ class _HomeScreenState extends State<HomeScreen> {
     Tab(icon: Icon(Icons.checklist), text: 'タスク'),
     Tab(icon: Icon(Icons.settings_outlined), text: '設定'),
   ];
+  StreamSubscription<List<SharedMediaFile>>? _intentSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _intentSub = ReceiveSharingIntent.instance.getMediaStream().listen(_consumeSharedItems);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final initial = await ReceiveSharingIntent.instance.getInitialMedia();
+      await _consumeSharedItems(initial);
+    });
+  }
+
+  @override
+  void dispose() {
+    _intentSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _consumeSharedItems(List<SharedMediaFile> sharedItems) async {
+    if (!mounted || sharedItems.isEmpty) return;
+
+    final app = context.read<AppState>();
+    var map = app.selectedMap;
+    map ??= await app.addMap(title: '共有インボックス', description: '外部アプリから共有されたデータ');
+
+    var added = 0;
+    for (final item in sharedItems) {
+      final raw = (item.message?.trim().isNotEmpty ?? false) ? item.message!.trim() : item.path.trim();
+      if (raw.isEmpty) continue;
+
+      final uri = Uri.tryParse(raw);
+      final isUrl = uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
+      final title = _sharedTitle(raw, isUrl);
+
+      await app.addNode(
+        mapId: map.id,
+        title: title,
+        description: raw,
+        type: isUrl ? NodeType.reference : NodeType.concept,
+        url: isUrl ? raw : null,
+      );
+      added++;
+    }
+
+    await ReceiveSharingIntent.instance.reset();
+    if (!mounted || added == 0) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('共有データからノードを$added件追加しました')),
+    );
+  }
+
+  String _sharedTitle(String raw, bool isUrl) {
+    if (isUrl) {
+      final uri = Uri.parse(raw);
+      return uri.host.isEmpty ? 'Shared URL' : uri.host;
+    }
+    final single = raw.replaceAll('\n', ' ').trim();
+    if (single.length <= 40) return single;
+    return '${single.substring(0, 40)}...';
+  }
 
   @override
   Widget build(BuildContext context) {
