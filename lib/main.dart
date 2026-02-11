@@ -220,6 +220,13 @@ class MapTab extends StatelessWidget {
                       ),
                     ),
                   ),
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: CustomPaint(
+                        painter: _NodeLinkPainter(nodes: nodes),
+                      ),
+                    ),
+                  ),
                   for (final node in nodes)
                     Positioned(
                       left: node.position.x,
@@ -249,6 +256,7 @@ class MapTab extends StatelessWidget {
                             description: node.description,
                             type: node.type,
                             url: node.url,
+                            parentNodeId: node.parentNodeId,
                           );
                     },
                     icon: const Icon(Icons.add_circle_outline),
@@ -306,6 +314,11 @@ class _NodeCard extends StatelessWidget {
                 Text(node.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
                 const SizedBox(height: 4),
                 Text(node.type.name, style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                const SizedBox(height: 4),
+                Text(
+                  '接続: 親${node.parentNodeIds.length} / 子${node.childNodeIds.length}',
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
+                ),
                 if (node.linkedTaskIds.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
@@ -317,6 +330,45 @@ class _NodeCard extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _NodeLinkPainter extends CustomPainter {
+  _NodeLinkPainter({required this.nodes});
+
+  final List<MindNode> nodes;
+
+  static const _cardWidth = 190.0;
+  static const _cardHeight = 90.0;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final index = <String, MindNode>{for (final n in nodes) n.id: n};
+    final linePaint = Paint()
+      ..color = Colors.blueGrey.withValues(alpha: 0.45)
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+    final dotPaint = Paint()
+      ..color = Colors.blueGrey.withValues(alpha: 0.7)
+      ..style = PaintingStyle.fill;
+
+    for (final parent in nodes) {
+      for (final childId in parent.childNodeIds) {
+        final child = index[childId];
+        if (child == null) continue;
+
+        final from = Offset(parent.position.x + _cardWidth / 2, parent.position.y + _cardHeight / 2);
+        final to = Offset(child.position.x + _cardWidth / 2, child.position.y + _cardHeight / 2);
+
+        canvas.drawLine(from, to, linePaint);
+        canvas.drawCircle(to, 3.2, dotPaint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _NodeLinkPainter oldDelegate) {
+    return oldDelegate.nodes != nodes;
   }
 }
 
@@ -739,19 +791,29 @@ class TaskDetailScreen extends StatelessWidget {
 }
 
 class NodeEditorDraft {
-  NodeEditorDraft({required this.title, required this.description, required this.type, this.url});
+  NodeEditorDraft({
+    required this.title,
+    required this.description,
+    required this.type,
+    this.url,
+    this.parentNodeId,
+  });
 
   final String title;
   final String description;
   final NodeType type;
   final String? url;
+  final String? parentNodeId;
 }
 
 Future<NodeEditorDraft?> _showNodeEditor(BuildContext context, {required String mapId, MindNode? initial}) {
+  final app = context.read<AppState>();
   final titleCtrl = TextEditingController(text: initial?.title ?? '');
   final descCtrl = TextEditingController(text: initial?.description ?? '');
   final urlCtrl = TextEditingController(text: initial?.url ?? '');
   var type = initial?.type ?? NodeType.concept;
+  var parentNodeId = initial?.parentNodeIds.firstOrNull;
+  final parentCandidates = app.nodes.where((n) => n.mapId == mapId && n.id != initial?.id).toList();
 
   return showModalBottomSheet<NodeEditorDraft>(
     context: context,
@@ -777,6 +839,21 @@ Future<NodeEditorDraft?> _showNodeEditor(BuildContext context, {required String 
                       if (value != null) setModalState(() => type = value);
                     },
                   ),
+                  const SizedBox(height: 8),
+                  if (initial == null)
+                    DropdownButtonFormField<String?>(
+                      initialValue: parentNodeId,
+                      decoration: const InputDecoration(labelText: '親ノード (任意)'),
+                      items: [
+                        const DropdownMenuItem<String?>(value: null, child: Text('親なし')),
+                        ...parentCandidates.map(
+                          (node) => DropdownMenuItem<String?>(value: node.id, child: Text(node.title, overflow: TextOverflow.ellipsis)),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        setModalState(() => parentNodeId = value);
+                      },
+                    ),
                   const SizedBox(height: 16),
                   FilledButton(
                     onPressed: () {
@@ -787,6 +864,7 @@ Future<NodeEditorDraft?> _showNodeEditor(BuildContext context, {required String 
                           description: descCtrl.text.trim(),
                           type: type,
                           url: urlCtrl.text.trim().isEmpty ? null : urlCtrl.text.trim(),
+                          parentNodeId: parentNodeId,
                         ),
                       );
                     },
