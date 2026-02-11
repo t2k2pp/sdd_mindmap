@@ -34,19 +34,18 @@ flutter run
 共有メニューで本アプリを選ぶと、URL/テキスト/ファイル情報をノードとして取り込みます。
 
 ### iOS / iPadOS
-Flutter側の受信処理と `Runner/Info.plist` への基本設定は反映済みです。
-ただし、iOSの共有機能は **XcodeでShare Extensionターゲット作成** が必要です。
+Share Extension ターゲットは作成済みです。  
+Xcode側の作業は署名関連の最小設定のみです。
 
 1. Xcodeで `ios/Runner.xcworkspace` を開く
-2. `File > New > Target > Share Extension` を作成（例: `Share Extension`）
-3. `Runner` と `Share Extension` の両方に App Groups を追加し、同じ group を設定
-   - 例: `group.com.t2k2pp.sdd_mindmap.share`
-4. `ShareViewController.swift` を `RSIShareViewController` 継承に変更
-   - `import receive_sharing_intent`
-   - `class ShareViewController: RSIShareViewController {}`
-5. `Build Phases` で `Embed Foundation Extension` を `Thin Binary` より上へ移動
+2. `Runner` と `Share Extension` の `Signing & Capabilities` で同じ Team を設定
+3. 両ターゲットに App Groups を追加し、同じ値を設定  
+   - `group.com.t2k2pp.sdd_mindmap.share`
+4. 必要なら `PRODUCT_BUNDLE_IDENTIFIER` をあなたの組織IDに合わせて調整  
+   - `Runner`  
+   - `Share Extension` (`Runner` のプレフィックス + `.ShareExtension`)
 
-この手順完了後、iOS/iPadOS でも共有メニューから本アプリへ取り込みできます。
+ここまでで、iOS/iPadOS でも共有メニューから本アプリへ取り込みできます。
 
 ## 品質チェック
 ```bash
