@@ -4,7 +4,7 @@
 <dict>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.com.t2k2pp.sdd_mindmap.share</string>
+		<string>group.com.t2k2pp.sddmindmap.share</string>
 	</array>
 </dict>
 </plist>

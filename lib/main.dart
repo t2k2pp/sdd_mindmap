@@ -133,8 +133,22 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-class MapTab extends StatelessWidget {
+class MapTab extends StatefulWidget {
   const MapTab({super.key});
+
+  @override
+  State<MapTab> createState() => _MapTabState();
+}
+
+class _MapTabState extends State<MapTab> {
+  final _queryCtrl = TextEditingController();
+  bool _highlightIsolated = true;
+
+  @override
+  void dispose() {
+    _queryCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -155,49 +169,86 @@ class MapTab extends StatelessWidget {
       );
     }
 
-    final nodes = app.selectedMapNodes;
+    final allNodes = app.selectedMapNodes;
+    final query = _queryCtrl.text.trim().toLowerCase();
+    final nodes = query.isEmpty
+        ? allNodes
+        : allNodes.where((n) {
+            return n.title.toLowerCase().contains(query) ||
+                n.description.toLowerCase().contains(query) ||
+                (n.url ?? '').toLowerCase().contains(query);
+          }).toList();
+    final isolatedCount = allNodes
+        .where((n) => n.parentNodeIds.isEmpty && n.childNodeIds.isEmpty && n.linkedTaskIds.isEmpty)
+        .length;
 
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+          child: Column(
             children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: map.id,
-                  decoration: const InputDecoration(labelText: 'マップ選択', border: OutlineInputBorder()),
-                  items: app.maps
-                      .map((m) => DropdownMenuItem<String>(value: m.id, child: Text(m.title, overflow: TextOverflow.ellipsis)))
-                      .toList(),
-                  onChanged: (id) {
-                    if (id != null) {
-                      context.read<AppState>().selectMap(id);
-                    }
-                  },
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      initialValue: map.id,
+                      decoration: const InputDecoration(labelText: 'マップ選択', border: OutlineInputBorder()),
+                      items: app.maps
+                          .map((m) => DropdownMenuItem<String>(value: m.id, child: Text(m.title, overflow: TextOverflow.ellipsis)))
+                          .toList(),
+                      onChanged: (id) {
+                        if (id != null) {
+                          context.read<AppState>().selectMap(id);
+                        }
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton.filled(
+                    tooltip: '新規マップ',
+                    onPressed: () async {
+                      final title = await _askText(context, title: '新規マップ', hint: 'マップ名');
+                      if (title == null || title.trim().isEmpty) return;
+                      if (!context.mounted) return;
+                      await context.read<AppState>().addMap(title: title.trim());
+                    },
+                    icon: const Icon(Icons.add),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    tooltip: 'マップ削除',
+                    onPressed: () async {
+                      final ok = await _confirm(context, 'マップ「${map.title}」を削除しますか？');
+                      if (!ok) return;
+                      if (!context.mounted) return;
+                      await context.read<AppState>().deleteMap(map.id);
+                    },
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+                ],
               ),
-              const SizedBox(width: 8),
-              IconButton.filled(
-                tooltip: '新規マップ',
-                onPressed: () async {
-                  final title = await _askText(context, title: '新規マップ', hint: 'マップ名');
-                  if (title == null || title.trim().isEmpty) return;
-                  if (!context.mounted) return;
-                  await context.read<AppState>().addMap(title: title.trim());
-                },
-                icon: const Icon(Icons.add),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                tooltip: 'マップ削除',
-                onPressed: () async {
-                  final ok = await _confirm(context, 'マップ「${map.title}」を削除しますか？');
-                  if (!ok) return;
-                  if (!context.mounted) return;
-                  await context.read<AppState>().deleteMap(map.id);
-                },
-                icon: const Icon(Icons.delete_outline),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _queryCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'ノード検索',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.search),
+                      ),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  FilterChip(
+                    label: Text('孤立($isolatedCount)'),
+                    selected: _highlightIsolated,
+                    onSelected: (value) => setState(() => _highlightIsolated = value),
+                  ),
+                ],
               ),
             ],
           ),
@@ -231,7 +282,10 @@ class MapTab extends StatelessWidget {
                     Positioned(
                       left: node.position.x,
                       top: node.position.y,
-                      child: _NodeCard(node: node),
+                      child: _NodeCard(
+                        node: node,
+                        highlightIsolated: _highlightIsolated,
+                      ),
                     ),
                 ],
               ),
@@ -273,9 +327,10 @@ class MapTab extends StatelessWidget {
 }
 
 class _NodeCard extends StatelessWidget {
-  const _NodeCard({required this.node});
+  const _NodeCard({required this.node, required this.highlightIsolated});
 
   final MindNode node;
+  final bool highlightIsolated;
 
   Color _typeColor(NodeType type) {
     switch (type) {
@@ -292,6 +347,7 @@ class _NodeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isIsolated = node.parentNodeIds.isEmpty && node.childNodeIds.isEmpty && node.linkedTaskIds.isEmpty;
     return GestureDetector(
       onPanUpdate: (details) {
         context.read<AppState>().moveNode(node.id, node.position.x + details.delta.dx, node.position.y + details.delta.dy);
@@ -302,10 +358,11 @@ class _NodeCard extends StatelessWidget {
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 210),
         child: Card(
-          elevation: 2,
+          elevation: highlightIsolated && isIsolated ? 5 : 2,
           child: Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
+              color: highlightIsolated && isIsolated ? Colors.amber.withValues(alpha: 0.16) : null,
               border: Border(left: BorderSide(color: _typeColor(node.type), width: 5)),
             ),
             child: Column(
@@ -323,6 +380,14 @@ class _NodeCard extends StatelessWidget {
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: Chip(label: Text('+${node.linkedTaskIds.length} tasks')),
+                  ),
+                if (highlightIsolated && isIsolated)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      '孤立ノード',
+                      style: TextStyle(fontSize: 11, color: Colors.amber.shade900, fontWeight: FontWeight.w600),
+                    ),
                   ),
               ],
             ),
@@ -381,32 +446,78 @@ class TaskTab extends StatefulWidget {
 
 class _TaskTabState extends State<TaskTab> {
   TaskStatus? _statusFilter;
+  final _queryCtrl = TextEditingController();
+  bool _onlyIsolated = false;
+
+  @override
+  void dispose() {
+    _queryCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     final all = app.tasks;
-    final tasks = _statusFilter == null ? all : all.where((t) => t.status == _statusFilter).toList();
+    final query = _queryCtrl.text.trim().toLowerCase();
+    var tasks = _statusFilter == null ? all : all.where((t) => t.status == _statusFilter).toList();
+    if (_onlyIsolated) {
+      tasks = tasks.where((t) => t.linkedNodeIds.isEmpty).toList();
+    }
+    if (query.isNotEmpty) {
+      tasks = tasks.where((t) {
+        return t.title.toLowerCase().contains(query) ||
+            (t.description ?? '').toLowerCase().contains(query) ||
+            t.tags.join(',').toLowerCase().contains(query);
+      }).toList();
+    }
+    final isolatedCount = all.where((t) => t.linkedNodeIds.isEmpty).length;
 
     return Column(
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-          child: Row(
+          child: Column(
             children: [
-              Expanded(
-                child: SegmentedButton<TaskStatus?>(
-                  segments: const [
-                    ButtonSegment<TaskStatus?>(value: null, label: Text('全て')),
-                    ButtonSegment<TaskStatus?>(value: TaskStatus.todo, label: Text('Todo')),
-                    ButtonSegment<TaskStatus?>(value: TaskStatus.inProgress, label: Text('進行中')),
-                    ButtonSegment<TaskStatus?>(value: TaskStatus.done, label: Text('完了')),
-                  ],
-                  selected: {_statusFilter},
-                  onSelectionChanged: (selected) {
-                    setState(() => _statusFilter = selected.first);
-                  },
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: SegmentedButton<TaskStatus?>(
+                      segments: const [
+                        ButtonSegment<TaskStatus?>(value: null, label: Text('全て')),
+                        ButtonSegment<TaskStatus?>(value: TaskStatus.todo, label: Text('Todo')),
+                        ButtonSegment<TaskStatus?>(value: TaskStatus.inProgress, label: Text('進行中')),
+                        ButtonSegment<TaskStatus?>(value: TaskStatus.done, label: Text('完了')),
+                      ],
+                      selected: {_statusFilter},
+                      onSelectionChanged: (selected) {
+                        setState(() => _statusFilter = selected.first);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _queryCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'タスク検索',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.search),
+                      ),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  FilterChip(
+                    label: Text('未分類($isolatedCount)'),
+                    selected: _onlyIsolated,
+                    onSelected: (value) => setState(() => _onlyIsolated = value),
+                  ),
+                ],
               ),
             ],
           ),

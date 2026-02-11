@@ -46,7 +46,7 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>AppGroupId</key>
-	<string>group.com.t2k2pp.sdd_mindmap.share</string>
+	<string>group.com.t2k2pp.sddmindmap.share</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

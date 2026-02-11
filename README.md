@@ -40,7 +40,7 @@ Xcode側の作業は署名関連の最小設定のみです。
 1. Xcodeで `ios/Runner.xcworkspace` を開く
 2. `Runner` と `Share Extension` の `Signing & Capabilities` で同じ Team を設定
 3. 両ターゲットに App Groups を追加し、同じ値を設定  
-   - `group.com.t2k2pp.sdd_mindmap.share`
+   - `group.com.t2k2pp.sddmindmap.share`
 4. 必要なら `PRODUCT_BUNDLE_IDENTIFIER` をあなたの組織IDに合わせて調整  
    - `Runner`  
    - `Share Extension` (`Runner` のプレフィックス + `.ShareExtension`)
