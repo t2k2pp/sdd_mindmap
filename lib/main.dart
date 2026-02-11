@@ -142,12 +142,57 @@ class MapTab extends StatefulWidget {
 
 class _MapTabState extends State<MapTab> {
   final _queryCtrl = TextEditingController();
+  final _viewController = TransformationController();
   bool _highlightIsolated = true;
+  bool _showHud = false;
+  String? _linkFromNodeId;
+
+  static const _canvasSize = 3600.0;
 
   @override
   void dispose() {
     _queryCtrl.dispose();
+    _viewController.dispose();
     super.dispose();
+  }
+
+  Future<void> _addNode(BuildContext context, String mapId) async {
+    final node = await _showNodeEditor(context, mapId: mapId);
+    if (node == null) return;
+    if (!context.mounted) return;
+    await context.read<AppState>().addNode(
+          mapId: mapId,
+          title: node.title,
+          description: node.description,
+          type: node.type,
+          url: node.url,
+          parentNodeId: node.parentNodeId,
+        );
+  }
+
+  Future<void> _handleNodeTap(MindNode node) async {
+    final app = context.read<AppState>();
+    if (_linkFromNodeId != null) {
+      if (_linkFromNodeId == node.id) {
+        setState(() => _linkFromNodeId = null);
+        return;
+      }
+      final from = _linkFromNodeId!;
+      final created = await app.linkParentChild(parentNodeId: from, childNodeId: node.id);
+      if (!mounted) return;
+      setState(() => _linkFromNodeId = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(created ? 'ノードを接続しました' : '接続済み、または接続不可です')),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => NodeDetailScreen(nodeId: node.id)));
+  }
+
+  void _resetView() {
+    _viewController.value = Matrix4.identity();
   }
 
   @override
@@ -181,17 +226,83 @@ class _MapTabState extends State<MapTab> {
     final isolatedCount = allNodes
         .where((n) => n.parentNodeIds.isEmpty && n.childNodeIds.isEmpty && n.linkedTaskIds.isEmpty)
         .length;
+    final linkingFromNode = _linkFromNodeId == null
+        ? null
+        : allNodes.where((n) => n.id == _linkFromNodeId).firstOrNull;
 
-    return Column(
+    return Stack(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-          child: Column(
-            children: [
-              Row(
+        Positioned.fill(
+          child: InteractiveViewer(
+            transformationController: _viewController,
+            minScale: 0.2,
+            maxScale: 6,
+            constrained: false,
+            boundaryMargin: const EdgeInsets.all(2200),
+            child: SizedBox(
+              width: _canvasSize,
+              height: _canvasSize,
+              child: Stack(
                 children: [
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
+                  Positioned.fill(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Colors.grey.shade50, Colors.white],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: CustomPaint(
+                        painter: _NodeLinkPainter(
+                          nodes: nodes,
+                          activeSourceNodeId: _linkFromNodeId,
+                        ),
+                      ),
+                    ),
+                  ),
+                  for (final node in nodes)
+                    Positioned(
+                      left: node.position.x,
+                      top: node.position.y,
+                      child: _NodeCard(
+                        node: node,
+                        highlightIsolated: _highlightIsolated,
+                        linkSourceActive: _linkFromNodeId == node.id,
+                        onTap: () => _handleNodeTap(node),
+                        onStartLink: () {
+                          setState(() => _linkFromNodeId = node.id);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('接続元: ${node.title}。接続先ノードをタップしてください')),
+                          );
+                        },
+                        onMove: (offset) {
+                          context.read<AppState>().moveNode(node.id, offset.dx, offset.dy);
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (_showHud)
+          Positioned(
+            top: 12,
+            left: 12,
+            right: 76,
+            child: Card(
+              elevation: 4,
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<String>(
                       initialValue: map.id,
                       decoration: const InputDecoration(labelText: 'マップ選択', border: OutlineInputBorder()),
                       items: app.maps
@@ -203,36 +314,8 @@ class _MapTabState extends State<MapTab> {
                         }
                       },
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton.filled(
-                    tooltip: '新規マップ',
-                    onPressed: () async {
-                      final title = await _askText(context, title: '新規マップ', hint: 'マップ名');
-                      if (title == null || title.trim().isEmpty) return;
-                      if (!context.mounted) return;
-                      await context.read<AppState>().addMap(title: title.trim());
-                    },
-                    icon: const Icon(Icons.add),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    tooltip: 'マップ削除',
-                    onPressed: () async {
-                      final ok = await _confirm(context, 'マップ「${map.title}」を削除しますか？');
-                      if (!ok) return;
-                      if (!context.mounted) return;
-                      await context.read<AppState>().deleteMap(map.id);
-                    },
-                    icon: const Icon(Icons.delete_outline),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
+                    const SizedBox(height: 8),
+                    TextField(
                       controller: _queryCtrl,
                       decoration: const InputDecoration(
                         labelText: 'ノード検索',
@@ -241,83 +324,104 @@ class _MapTabState extends State<MapTab> {
                       ),
                       onChanged: (_) => setState(() {}),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  FilterChip(
-                    label: Text('孤立($isolatedCount)'),
-                    selected: _highlightIsolated,
-                    onSelected: (value) => setState(() => _highlightIsolated = value),
-                  ),
-                ],
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      children: [
+                        FilterChip(
+                          label: Text('孤立($isolatedCount)'),
+                          selected: _highlightIsolated,
+                          onSelected: (value) => setState(() => _highlightIsolated = value),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () async {
+                            final title = await _askText(context, title: '新規マップ', hint: 'マップ名');
+                            if (title == null || title.trim().isEmpty) return;
+                            if (!context.mounted) return;
+                            await context.read<AppState>().addMap(title: title.trim());
+                          },
+                          icon: const Icon(Icons.add),
+                          label: const Text('マップ追加'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () async {
+                            final ok = await _confirm(context, 'マップ「${map.title}」を削除しますか？');
+                            if (!ok) return;
+                            if (!context.mounted) return;
+                            await context.read<AppState>().deleteMap(map.id);
+                          },
+                          icon: const Icon(Icons.delete_outline),
+                          label: const Text('マップ削除'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        if (_linkFromNodeId != null && linkingFromNode != null)
+          Positioned(
+            left: 12,
+            right: 12,
+            bottom: 18,
+            child: Card(
+              color: Colors.orange.shade50,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '接続モード: ${linkingFromNode.title} から接続先を選択中',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () => setState(() => _linkFromNodeId = null),
+                      child: const Text('キャンセル'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        Positioned(
+          top: 12,
+          right: 12,
+          child: Column(
+            children: [
+              FloatingActionButton.small(
+                heroTag: 'map_hud',
+                onPressed: () => setState(() => _showHud = !_showHud),
+                child: Icon(_showHud ? Icons.close : Icons.tune),
+              ),
+              const SizedBox(height: 8),
+              FloatingActionButton.small(
+                heroTag: 'map_add_node',
+                onPressed: () => _addNode(context, map.id),
+                child: const Icon(Icons.add_circle_outline),
+              ),
+              const SizedBox(height: 8),
+              FloatingActionButton.small(
+                heroTag: 'map_reset_view',
+                onPressed: _resetView,
+                child: const Icon(Icons.center_focus_strong),
               ),
             ],
           ),
         ),
-        Expanded(
+        Positioned(
+          left: 12,
+          bottom: 12,
           child: Card(
-            margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-            clipBehavior: Clip.antiAlias,
-            child: InteractiveViewer(
-              minScale: 0.5,
-              maxScale: 3,
-              boundaryMargin: const EdgeInsets.all(500),
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade50,
-                        backgroundBlendMode: BlendMode.softLight,
-                      ),
-                    ),
-                  ),
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: CustomPaint(
-                        painter: _NodeLinkPainter(nodes: nodes),
-                      ),
-                    ),
-                  ),
-                  for (final node in nodes)
-                    Positioned(
-                      left: node.position.x,
-                      top: node.position.y,
-                      child: _NodeCard(
-                        node: node,
-                        highlightIsolated: _highlightIsolated,
-                      ),
-                    ),
-                ],
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              child: Text(
+                '操作: ピンチ拡大縮小 / 空白ドラッグでパン / ノード長押し＋ドラッグで移動',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
               ),
-            ),
-          ),
-        ),
-        SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: () async {
-                      final node = await _showNodeEditor(context, mapId: map.id);
-                      if (node == null) return;
-                      if (!context.mounted) return;
-                      await context.read<AppState>().addNode(
-                            mapId: map.id,
-                            title: node.title,
-                            description: node.description,
-                            type: node.type,
-                            url: node.url,
-                            parentNodeId: node.parentNodeId,
-                          );
-                    },
-                    icon: const Icon(Icons.add_circle_outline),
-                    label: const Text('ノード追加'),
-                  ),
-                ),
-              ],
             ),
           ),
         ),
@@ -327,10 +431,21 @@ class _MapTabState extends State<MapTab> {
 }
 
 class _NodeCard extends StatelessWidget {
-  const _NodeCard({required this.node, required this.highlightIsolated});
+  const _NodeCard({
+    required this.node,
+    required this.highlightIsolated,
+    required this.linkSourceActive,
+    required this.onTap,
+    required this.onStartLink,
+    required this.onMove,
+  });
 
   final MindNode node;
   final bool highlightIsolated;
+  final bool linkSourceActive;
+  final VoidCallback onTap;
+  final VoidCallback onStartLink;
+  final ValueChanged<Offset> onMove;
 
   Color _typeColor(NodeType type) {
     switch (type) {
@@ -349,21 +464,27 @@ class _NodeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isIsolated = node.parentNodeIds.isEmpty && node.childNodeIds.isEmpty && node.linkedTaskIds.isEmpty;
     return GestureDetector(
-      onPanUpdate: (details) {
-        context.read<AppState>().moveNode(node.id, node.position.x + details.delta.dx, node.position.y + details.delta.dy);
-      },
-      onDoubleTap: () async {
-        await Navigator.of(context).push(MaterialPageRoute(builder: (_) => NodeDetailScreen(nodeId: node.id)));
+      onTap: onTap,
+      onLongPress: onStartLink,
+      onLongPressMoveUpdate: (details) {
+        onMove(
+          Offset(
+            node.position.x + details.localOffsetFromOrigin.dx,
+            node.position.y + details.localOffsetFromOrigin.dy,
+          ),
+        );
       },
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 210),
         child: Card(
-          elevation: highlightIsolated && isIsolated ? 5 : 2,
+          elevation: highlightIsolated && isIsolated ? 5 : (linkSourceActive ? 6 : 2),
           child: Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: highlightIsolated && isIsolated ? Colors.amber.withValues(alpha: 0.16) : null,
-              border: Border(left: BorderSide(color: _typeColor(node.type), width: 5)),
+              color: highlightIsolated && isIsolated
+                  ? Colors.amber.withValues(alpha: 0.16)
+                  : (linkSourceActive ? Colors.lightBlue.withValues(alpha: 0.14) : null),
+              border: Border(left: BorderSide(color: linkSourceActive ? Colors.lightBlue : _typeColor(node.type), width: 5)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -389,6 +510,11 @@ class _NodeCard extends StatelessWidget {
                       style: TextStyle(fontSize: 11, color: Colors.amber.shade900, fontWeight: FontWeight.w600),
                     ),
                   ),
+                const SizedBox(height: 6),
+                Text(
+                  '長押し: 接続開始 / 長押しドラッグ: 移動',
+                  style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
+                ),
               ],
             ),
           ),
@@ -399,9 +525,10 @@ class _NodeCard extends StatelessWidget {
 }
 
 class _NodeLinkPainter extends CustomPainter {
-  _NodeLinkPainter({required this.nodes});
+  _NodeLinkPainter({required this.nodes, this.activeSourceNodeId});
 
   final List<MindNode> nodes;
+  final String? activeSourceNodeId;
 
   static const _cardWidth = 190.0;
   static const _cardHeight = 90.0;
@@ -412,6 +539,10 @@ class _NodeLinkPainter extends CustomPainter {
     final linePaint = Paint()
       ..color = Colors.blueGrey.withValues(alpha: 0.45)
       ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+    final activePaint = Paint()
+      ..color = Colors.lightBlue.withValues(alpha: 0.85)
+      ..strokeWidth = 3
       ..style = PaintingStyle.stroke;
     final dotPaint = Paint()
       ..color = Colors.blueGrey.withValues(alpha: 0.7)
@@ -425,7 +556,7 @@ class _NodeLinkPainter extends CustomPainter {
         final from = Offset(parent.position.x + _cardWidth / 2, parent.position.y + _cardHeight / 2);
         final to = Offset(child.position.x + _cardWidth / 2, child.position.y + _cardHeight / 2);
 
-        canvas.drawLine(from, to, linePaint);
+        canvas.drawLine(from, to, parent.id == activeSourceNodeId ? activePaint : linePaint);
         canvas.drawCircle(to, 3.2, dotPaint);
       }
     }
@@ -433,7 +564,7 @@ class _NodeLinkPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _NodeLinkPainter oldDelegate) {
-    return oldDelegate.nodes != nodes;
+    return oldDelegate.nodes != nodes || oldDelegate.activeSourceNodeId != activeSourceNodeId;
   }
 }
 

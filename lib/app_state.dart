@@ -189,6 +189,61 @@ class AppState extends ChangeNotifier {
     await _save();
   }
 
+  Future<bool> linkParentChild({
+    required String parentNodeId,
+    required String childNodeId,
+  }) async {
+    if (parentNodeId == childNodeId) return false;
+
+    final parentIndex = _nodes.indexWhere((n) => n.id == parentNodeId);
+    final childIndex = _nodes.indexWhere((n) => n.id == childNodeId);
+    if (parentIndex < 0 || childIndex < 0) return false;
+
+    final parent = _nodes[parentIndex];
+    final child = _nodes[childIndex];
+    if (parent.mapId != child.mapId) return false;
+
+    var changed = false;
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    if (!parent.childNodeIds.contains(childNodeId)) {
+      _nodes[parentIndex] = parent.copyWith(
+        childNodeIds: <String>[...parent.childNodeIds, childNodeId],
+        updatedAt: now,
+      );
+      changed = true;
+    }
+
+    if (!child.parentNodeIds.contains(parentNodeId)) {
+      _nodes[childIndex] = child.copyWith(
+        parentNodeIds: <String>[...child.parentNodeIds, parentNodeId],
+        updatedAt: now,
+      );
+      changed = true;
+    }
+
+    final hasLink = _links.any(
+      (l) => l.type == LinkType.parentChild && l.sourceId == parentNodeId && l.targetId == childNodeId,
+    );
+    if (!hasLink) {
+      _links.add(
+        MindLink(
+          id: _newId('link'),
+          sourceId: parentNodeId,
+          targetId: childNodeId,
+          type: LinkType.parentChild,
+          createdAt: now,
+        ),
+      );
+      changed = true;
+    }
+
+    if (changed) {
+      await _saveAndNotify();
+    }
+    return changed;
+  }
+
   Future<void> deleteNode(String nodeId) async {
     final index = _nodes.indexWhere((n) => n.id == nodeId);
     if (index < 0) return;
